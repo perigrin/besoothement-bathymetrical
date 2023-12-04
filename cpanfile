@@ -1,0 +1,1 @@
+requires "Feature::Compat::Class";
