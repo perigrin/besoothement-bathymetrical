@@ -1,7 +1,8 @@
 use 5.38.0;
 use warnings;
 
-use Feature::Compat::Class;
+use experimental 'class';
+
 use Scalar::Util qw(blessed);
 
 class PLHop::State {
@@ -36,12 +37,13 @@ class PLHop::Multigoal {
 
 class PLHop::Domain {
     use List::Util qw(uniq);
+    use Carp       qw(confess);
 
     field $name : param;
 
     field %actions;
-    method get_action      ($name) { $actions{$name} }
-    method declare_actions (%new)  { %actions = ( %actions, %new ) }
+    method get_action      ( $name //= confess ) { $actions{$name} }
+    method declare_actions (%new) { %actions = ( %actions, %new ) }
 
     field %commands;
     method get_command      ($name) { $commands{$name} }
@@ -84,10 +86,11 @@ class PLHop::Planner {
     field $state : param     = {};
     field $todo_list : param = [];
 
-    method _seek_plan ( $state, $todo_list, $plan, $depth ) {
-        return $plan if @$todo_list == 0;
+    method _seek_plan ( $s, $list, $plan, $depth ) {
+        return $plan unless @$list;
 
         my sub lookup_handler ($item) {
+            return unless $item && @$item;
             my ($task) = @$item;
 
             return '_apply_action' if $domain->get_action($task);
@@ -97,38 +100,62 @@ class PLHop::Planner {
       #        return '_refine_multigoal' if $item isa 'PLHop::MultiGoal';
             return;
         }
+        my ( $item, @rest ) = @$list;
+        my $handler = lookup_handler($item) // return $plan;
 
-        my ( $item, @rest ) = @$todo_list;
-        my $handler = lookup_handler($item) // return;
-
-        return $self->$handler( $state, $item, \@rest, $plan, $depth );
+        return $self->$handler( $s, $item, \@rest, $plan, $depth );
     }
 
-    method _apply_action ( $state, $item, $list, $plan, $depth ) {
+    method _apply_action ( $s, $item, $list, $plan, $depth ) {
         my ( $name, @args ) = @$item;
         my $action    = $domain->get_action($name) // return;
-        my $new_state = $action->( dclone($state), @args );
+        my $new_state = $action->( dclone($s), @args );
 
         return unless $new_state;
         return $self->_seek_plan( $new_state, $list, [ @$plan, $item ],
             $depth + 1 );
     }
 
-    method _refine_task ( $state, $item, $list, $plan, $depth ) {
+    method _refine_task ( $s, $item, $list, $plan, $depth ) {
         my ( $name, @args ) = @$item;
         my @methods = $domain->get_task_methods($name);
 
         for my $method (@methods) {
-            my @subtasks = $method->( $state, @args );
+            my @subtasks = $method->( $s, @args );
             if ( @subtasks > 0 ) {
-                return $self->_seek_plan( $state, [ @subtasks, @$list ],
+                return $self->_seek_plan( $s, [ @subtasks, @$list ],
                     $plan, $depth + 1 );
             }
         }
         return;
     }
 
-    method plan() { $self->_seek_plan( $state, $todo_list, [], 0 )->@* }
+    method plan ( $s = $state, $list = $todo_list ) {
+        $self->_seek_plan( $s, $list, [], 0 )->@*;
+    }
+
+    method run_lazy_lookahead (
+        $s         = dclone($state),    # we modify the state, so take a copy
+        $list      = $todo_list,
+        $max_tries = 10
+      )
+    {
+        for ( 0 .. $max_tries ) {
+            my @plan = $self->plan( $s, $list );
+            return $s unless @plan;
+
+            for my $action (@plan) {
+                my ( $name, @rest ) = @$action;
+
+                my $command = $domain->get_command($name)
+                  // $domain->get_action($name);
+
+                my $new_state = $command->( dclone($s), @rest ) // last;
+                $s = $new_state;
+            }
+        }
+        return $s;
+    }
 }
 
 my sub m_verify_g ( $state, $method, $state_var, $arg, $desired_val, $depth ) {
