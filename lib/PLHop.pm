@@ -37,13 +37,12 @@ class PLHop::Multigoal {
 
 class PLHop::Domain {
     use List::Util qw(uniq);
-    use Carp       qw(confess);
 
     field $name : param;
 
     field %actions;
-    method get_action      ( $name //= confess ) { $actions{$name} }
-    method declare_actions (%new) { %actions = ( %actions, %new ) }
+    method get_action      ($name) { $actions{$name} }
+    method declare_actions (%new)  { %actions = ( %actions, %new ) }
 
     field %commands;
     method get_command      ($name) { $commands{$name} }
@@ -53,7 +52,7 @@ class PLHop::Domain {
         '_verify_g'  => [ \&m_verify_g ],
         '_verify_mg' => [ \&m_verify_mg ],
     );
-    method get_task_methods ($name) { $task_methods{$name}->@* }
+    method get_task_method ($name) { $task_methods{$name}->@* }
 
     method declare_task_methods ( $name, @methods ) {
         my $old_methods = $task_methods{$name} // [];
@@ -61,22 +60,17 @@ class PLHop::Domain {
         return %task_methods;
     }
 
-    field %unigoal_methods;
-    method get_unigoal_methods ($name) { $unigoal_methods{$name} }
+    field %goal_methods;
 
-    method declare_unigoal_methods ( $state_var_name, @methods ) {
-        my $old_methods = $unigoal_methods{$name} // [];
-        $unigoal_methods{$name} = [ uniq( @methods, @$old_methods ) ];
-        return %unigoal_methods;
+    method get_goal_methods ($name) {
+        return $goal_methods{$name}->@*;
     }
 
-    field @multigoal_methods;
-    method get_multi_goal_methods() { @multigoal_methods }
-
-    method declare_multigoal_methods (@methods) {
-        @multigoal_methods = uniq( @methods, @multigoal_methods );
+    method declare_goal_methods ( $name, @methods ) {
+        my $old_methods = $goal_methods{$name} // [];
+        $goal_methods{$name} = [ uniq( @methods, @$old_methods ) ];
+        return %goal_methods;
     }
-
 }
 
 class PLHop::Planner {
@@ -90,19 +84,24 @@ class PLHop::Planner {
         return $plan unless @$list;
 
         my sub lookup_handler ($item) {
-            return unless $item && @$item;
-            my ($task) = @$item;
+            return unless $item;
 
-            return '_apply_action' if $domain->get_action($task);
-            return '_refine_task'  if $domain->get_task_methods($task);
+            if ( ref($item) eq 'ARRAY' ) {
+                return unless @$item;    # if the task is empty, do nothing
 
-      #        return '_refine_unigoal'   if $domain->get_unigoal_method($task);
-      #        return '_refine_multigoal' if $item isa 'PLHop::MultiGoal';
+                my ($task) = @$item;
+
+                return '_apply_action' if $domain->get_action($task);
+                return '_refine_task'  if $domain->get_task_method($task);
+            }
+            if ( ref($item) eq 'HASH' ) {
+                return '_refine_goals';
+            }
+
             return;
         }
         my ( $item, @rest ) = @$list;
         my $handler = lookup_handler($item) // return $plan;
-
         return $self->$handler( $s, $item, \@rest, $plan, $depth );
     }
 
@@ -118,16 +117,37 @@ class PLHop::Planner {
 
     method _refine_task ( $s, $item, $list, $plan, $depth ) {
         my ( $name, @args ) = @$item;
-        my @methods = $domain->get_task_methods($name);
+        my @methods = $domain->get_task_method($name);
 
         for my $method (@methods) {
             my @subtasks = $method->( $s, @args );
-            if ( @subtasks > 0 ) {
+            if (@subtasks) {
                 return $self->_seek_plan( $s, [ @subtasks, @$list ],
                     $plan, $depth + 1 );
             }
         }
         return;
+    }
+
+    # operates on goals and subgoals asciibetically
+    method _refine_goals ( $s, $goal, $list, $plan, $depth ) {
+        my @plans = ();
+        for my $key ( sort keys $goal->%* ) {
+            my @methods = $domain->get_goal_methods($key);
+            for my $subkey ( sort keys $goal->{$key}->%* ) {
+                for my $method (@methods) {
+                    my @subtasks =
+                      $method->( $s, $subkey, $goal->{$key}->{$subkey} );
+                    if (@subtasks) {
+                        push @plans,
+                          $self->_seek_plan( $s, [ @subtasks, @$list ],
+                            $plan, $depth + 1 )->@*;
+                        last;    # stop iterating methods
+                    }
+                }
+            }
+        }
+        return \@plans;
     }
 
     method plan ( $s = $state, $list = $todo_list ) {
