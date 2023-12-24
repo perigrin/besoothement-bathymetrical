@@ -117,6 +117,7 @@ sub do_nothing ( $state, $p, $y ) {
 
 sub travel_by_foot ( $state, $p, $y ) {
     my $x = $state->{loc}->{$p};
+    return if $x eq $y;
     return if distance( $x, $y ) > 2;    # more than 2 is too far to walk
     return [ 'walk', $p, $x, $y ];
 }

@@ -179,6 +179,7 @@ $domain->declare_goal_methods( 'loc', \&travel_by_foot, \&travel_by_taxi );
       'got the plan we expected';
 
 }
+
 {
     note "Now make a plan to get Alice and then Bob to the park";
     my $planner = PLHop::Planner->new(

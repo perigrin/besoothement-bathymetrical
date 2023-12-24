@@ -52,7 +52,12 @@ class PLHop::Domain {
         '_verify_g'  => [ \&m_verify_g ],
         '_verify_mg' => [ \&m_verify_mg ],
     );
-    method get_task_method ($name) { $task_methods{$name}->@* }
+    use Carp qw(confess);
+
+    method get_task_method ($name) {
+        confess "ref" if ref $name;
+        $task_methods{$name}->@*;
+    }
 
     method declare_task_methods ( $name, @methods ) {
         my $old_methods = $task_methods{$name} // [];
@@ -100,33 +105,39 @@ class PLHop::Planner {
 
             return;
         }
+
         my ( $item, @rest ) = @$list;
         my $handler = lookup_handler($item) // return $plan;
         return $self->$handler( $s, $item, \@rest, $plan, $depth );
     }
 
     method _apply_action ( $s, $item, $list, $plan, $depth ) {
+
         my ( $name, @args ) = @$item;
         my $action    = $domain->get_action($name) // return;
         my $new_state = $action->( dclone($s), @args );
 
-        return unless $new_state;
-        return $self->_seek_plan( $new_state, $list, [ @$plan, $item ],
-            $depth + 1 );
+        if ( ref $new_state ) {
+            return $self->_seek_plan( $new_state, $list, [ @$plan, $item ],
+                $depth + 1 );
+        }
+        return [];
     }
 
     method _refine_task ( $s, $item, $list, $plan, $depth ) {
+
         my ( $name, @args ) = @$item;
         my @methods = $domain->get_task_method($name);
 
         for my $method (@methods) {
             my @subtasks = $method->( $s, @args );
             if (@subtasks) {
-                return $self->_seek_plan( $s, [ @subtasks, @$list ],
+                my $res = $self->_seek_plan( $s, [ @subtasks, @$list ],
                     $plan, $depth + 1 );
+                if ( $res && @$res > 0 ) { return $res }
             }
         }
-        return;
+        return [];
     }
 
     # operates on goals and subgoals asciibetically
@@ -151,7 +162,7 @@ class PLHop::Planner {
     }
 
     method plan ( $s = $state, $list = $todo_list ) {
-        $self->_seek_plan( $s, $list, [], 0 )->@*;
+        ( $self->_seek_plan( $s, $list, [], 0 ) // [] )->@*;
     }
 
     method run_lazy_lookahead (
