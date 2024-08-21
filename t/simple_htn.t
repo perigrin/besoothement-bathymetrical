@@ -6,11 +6,11 @@ use Test::More;
 use PLHop;
 
 # Ported From:
-# https://github.com/dananau/GTPyhop/blob/main/Examples/pyhop_simple_travel_example.py
+# https://github.com/dananau/GTPyhop/blob/main/Examples/simple_htn.py
 
 # Rather than hard-coding the domain name, use the name of the current file.
 # This makes the code more portable.
-my $domain = PLHop::Domain->new( name => 'pyhop_simple_travel_example' );
+my $domain = PLHop::Domain->new( name => 'simple_htn' );
 
 my $state = {
     dist => {

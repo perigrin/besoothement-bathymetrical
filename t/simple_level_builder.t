@@ -6,56 +6,21 @@ use Test::More;
 use PLHop;
 
 # Ported From:
-# https://github.com/dananau/GTPyhop/blob/main/Examples/simple_hgn.py
+# https://github.com/dananau/GTPyhop/blob/main/Examples/simple_htn.py
 
 # Rather than hard-coding the domain name, use the name of the current file.
 # This makes the code more portable.
-my $domain = PLHop::Domain->new( name => 'simple_hgn' );
+my $domain = PLHop::Domain->new( name => 'simple_htn' );
 
 my $state = {
-    dist => {
-        home_a => {
-            home_b => 7,
-            park   => 8,
-        },
-        home_b => {
-            park => 2,
-        },
-        station => {
-            home_a => 1,
-            home_b => 7,
-            park   => 9,
-        },
-    },
-    loc => {
-        alice => 'home_a',
-        bob   => 'home_b',
-        taxi1 => 'park',
-        taxi2 => 'station',
-    },
-    cash => {
-        alice => 20,
-        bob   => 15,
-    },
-    owe => {
-        alice => 0,
-        bob   => 0,
+    rooms => {
+        entrance => ['exit'],
+        exit     => ['entrance'],
     },
 };
 
-my $goal1 = { loc => { alice => 'park' } };
-my $goal2 = { loc => { bob   => 'park' } };
-my $goal3 = { loc => { alice => 'park', bob => 'park' } };
-
-sub taxi_rate ($dist) { 1.5 + 0.5 * $dist }
-
-sub distance ( $x, $y ) {
-    return 0 if $x eq $y;
-    $state->{dist}->{$x}->{$y} //= $state->{dist}->{$y}->{$x};
-}
-
 $domain->declare_actions(
-    walk => sub ( $state, $p, $x, $y ) {
+    create_room => sub ( $state, $p, $x, $y ) {
         return unless $state->{loc}->{$p} eq $x;
         $state->{loc}->{$p} = $y;
         return $state;
@@ -115,12 +80,17 @@ $domain->declare_commands(
     },
 );
 
+sub do_nothing ( $state, $p, $y ) {
+    my $x = $state->{loc}->{$p};
+    return [] if $x eq $y;
+    return;
+}
+
 sub travel_by_foot ( $state, $p, $y ) {
     my $x = $state->{loc}->{$p};
-    if ( distance( $x, $y ) <= 2 ) {    # only walk if it's less than 2
-        return [ 'walk', $p, $x, $y ];
-    }
-    return;
+    return if $x eq $y;
+    return if distance( $x, $y ) > 2;    # more than 2 is too far to walk
+    return [ 'walk', $p, $x, $y ];
 }
 
 sub travel_by_taxi ( $state, $p, $y ) {
@@ -133,14 +103,14 @@ sub travel_by_taxi ( $state, $p, $y ) {
     );
 }
 
-$domain->declare_goal_methods( 'loc', \&travel_by_foot, \&travel_by_taxi );
-
+$domain->declare_task_methods( 'travel', \&do_nothing, \&travel_by_foot,
+    \&travel_by_taxi );
 {
     note "Can we get Alice to the park?";
     my $planner = PLHop::Planner->new(
         domain    => $domain,
         state     => $state,
-        todo_list => [$goal1]
+        todo_list => [ [ 'travel', 'alice', 'park' ] ]
     );
 
     is_deeply [ $planner->plan() ],
@@ -151,24 +121,12 @@ $domain->declare_goal_methods( 'loc', \&travel_by_foot, \&travel_by_taxi );
       'got the plan we expected';
 }
 {
-    note "Can we get Bob to the park?";
-    my $planner = PLHop::Planner->new(
-        domain    => $domain,
-        state     => $state,
-        todo_list => [$goal2]
-    );
-
-    is_deeply [ $planner->plan() ],
-      [ [qw(walk bob home_b park)] ],
-      'got the plan we expected';
-}
-
-{
     note "Now make a plan to get Alice and then Bob to the park";
     my $planner = PLHop::Planner->new(
         domain    => $domain,
         state     => $state,
-        todo_list => [ $goal1, $goal2 ],
+        todo_list =>
+          [ [ 'travel', 'alice', 'park' ], [ 'travel', 'bob', 'park' ] ],
     );
 
     is_deeply [ $planner->plan() ],
@@ -180,24 +138,6 @@ $domain->declare_goal_methods( 'loc', \&travel_by_foot, \&travel_by_taxi );
 
 }
 
-{
-    note "Now make a plan to get Alice and then Bob to the park";
-    my $planner = PLHop::Planner->new(
-        domain    => $domain,
-        state     => $state,
-        todo_list => [$goal3],
-    );
-
-    is_deeply [ $planner->plan() ],
-      [
-        [qw(call_taxi alice home_a)], [qw(ride_taxi alice park)],
-        [qw(pay_driver alice park)],  [qw(walk bob home_b park)]
-      ],
-      'got the plan we expected';
-
-}
-done_testing;
-__END__
 {
 
     note <<~EOF;
